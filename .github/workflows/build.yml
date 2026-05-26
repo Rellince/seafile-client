@@ -1,0 +1,92 @@
+name: Build desktop client
+
+on:
+  push:
+    branches: [rellince]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake intltool valac \
+            qtbase5-dev qttools5-dev qttools5-dev-tools libqt5webengine5 qtwebengine5-dev \
+            libssl-dev libcurl4-openssl-dev libsqlite3-dev libglib2.0-dev \
+            libevent-dev uuid-dev libjansson-dev libtool \
+            libsearpc-dev libseafile-dev \
+            file desktop-file-utils libfuse2
+
+      - name: Compute version
+        id: meta
+        run: |
+          SHA_SHORT=${GITHUB_SHA::12}
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            APK_TAG="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="rellince-${{ github.run_number }}-${SHA_SHORT}"
+            APK_TAG="${VERSION}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "release_tag=${APK_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release .
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Package AppImage
+        run: |
+          DESTDIR="$(pwd)/AppDir" cmake --install build
+          # Build an AppImage with linuxdeploy + qt plugin
+          curl -sL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+          curl -sL -o linuxdeploy-plugin-qt "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage"
+          chmod +x linuxdeploy linuxdeploy-plugin-qt
+          OUT="seafile-client-rellince-${{ steps.meta.outputs.version }}-x86_64.AppImage"
+          ./linuxdeploy --appdir AppDir --plugin qt --output appimage --desktop-file AppDir/usr/share/applications/seafile.desktop
+          mv Seafile_Client*.AppImage "${OUT}" 2>/dev/null || mv *.AppImage "${OUT}"
+          echo "OUT=${OUT}" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: seafile-client-linux-${{ steps.meta.outputs.version }}
+          path: ${{ env.OUT }}
+          retention-days: 30
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: Seafile Client (rellince) ${{ steps.meta.outputs.version }}
+          files: ${{ env.OUT }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # macOS & Windows builds are deliberately deferred — Andis runs Linux as his
+  # daily driver and relatives are primarily on Android + web. Re-enable these
+  # jobs once a relative actually asks for a native desktop client on those
+  # platforms. Pattern: brew-install qt5/libsearpc/libseafile, cmake build,
+  # then macdeployqt for .dmg / windeployqt + NSIS for .exe. Both unsigned
+  # initially (per fork-setup decision).
+  #
+  # build-macos:
+  #   runs-on: macos-13
+  #   steps: [...]
+  #
+  # build-windows:
+  #   runs-on: windows-latest
+  #   steps: [...]

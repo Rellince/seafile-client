@@ -1,11 +1,9 @@
 name: Build desktop client
 
-# Manual-only until the C deps chain is sorted out. Ubuntu's libseafile-dev is
-# too old for upstream master's sync error codes (SYNC_ERROR_ID_DEL_CONFIRMATION_PENDING
-# et al. — see https://github.com/Rellince/seafile-client/actions). Fix path:
-# add Seafile's own apt repo for libseafile-dev, or build libseafile from source.
-# Until a relative actually asks for a native desktop client, this stays off.
 on:
+  push:
+    branches: [rellince]
+    tags: ["v*.*.*"]
   workflow_dispatch:
 
 permissions:
@@ -18,16 +16,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build deps
+      - name: Install system build deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake intltool valac \
+            build-essential cmake intltool valac libtool autoconf automake pkg-config re2c flex \
             qtbase5-dev qttools5-dev qttools5-dev-tools libqt5webengine5 qtwebengine5-dev \
             libssl-dev libcurl4-openssl-dev libsqlite3-dev libglib2.0-dev \
-            libevent-dev uuid-dev libjansson-dev libtool \
-            libsearpc-dev libseafile-dev \
-            file desktop-file-utils libfuse2
+            libevent-dev uuid-dev libjansson-dev libarchive-dev \
+            libfuse-dev libsasl2-dev libldap2-dev libonig-dev libxml2-dev libjwt-dev libhiredis-dev \
+            sqlite3 file desktop-file-utils libfuse2
+
+      - name: Build libsearpc + libseafile from source
+        run: |
+          # Upstream Ubuntu's libseafile-dev is ~8.x; master uses error codes added in 9+.
+          # haiwen maintains seafile-test-deploy for exactly this — clones & builds matching
+          # versions of libsearpc + ccnet-server + seafile-server, installs to /usr/local.
+          git clone --depth=1 --branch=master https://github.com/haiwen/seafile-test-deploy /tmp/seafile-test-deploy
+          cd /tmp/seafile-test-deploy
+          # bootstrap.sh expects these env vars to exist; values irrelevant for client build
+          export JWT_PRIVATE_KEY=ci-placeholder SITE_ROOT=/ \
+                 SEAFILE_MYSQL_DB_CCNET_DB_NAME=ccnet \
+                 SEAFILE_MYSQL_DB_SEAFILE_DB_NAME=seafile \
+                 SEAFILE_MYSQL_DB_SEAHUB_DB_NAME=seahub
+          ./bootstrap.sh
+          sudo ldconfig
 
       - name: Compute version
         id: meta
@@ -52,7 +65,6 @@ jobs:
       - name: Package AppImage
         run: |
           DESTDIR="$(pwd)/AppDir" cmake --install build
-          # Build an AppImage with linuxdeploy + qt plugin
           curl -sL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
           curl -sL -o linuxdeploy-plugin-qt "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage"
           chmod +x linuxdeploy linuxdeploy-plugin-qt
@@ -78,17 +90,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # macOS & Windows builds are deliberately deferred — Andis runs Linux as his
-  # daily driver and relatives are primarily on Android + web. Re-enable these
-  # jobs once a relative actually asks for a native desktop client on those
-  # platforms. Pattern: brew-install qt5/libsearpc/libseafile, cmake build,
-  # then macdeployqt for .dmg / windeployqt + NSIS for .exe. Both unsigned
-  # initially (per fork-setup decision).
-  #
-  # build-macos:
-  #   runs-on: macos-13
-  #   steps: [...]
-  #
-  # build-windows:
-  #   runs-on: windows-latest
-  #   steps: [...]
+  # macOS & Windows builds deferred until a relative actually asks for native
+  # desktop on those platforms. Pattern: brew install qt5 + build libsearpc/libseafile
+  # from source via vcpkg or homebrew tap, cmake build, macdeployqt / windeployqt + NSIS.
+  # Both unsigned initially per the earlier fork-setup decision.

@@ -1,9 +1,11 @@
 name: Build desktop client
 
+# Manual-only until the C deps chain is sorted out. Ubuntu's libseafile-dev is
+# too old for upstream master's sync error codes (SYNC_ERROR_ID_DEL_CONFIRMATION_PENDING
+# et al. — see https://github.com/Rellince/seafile-client/actions). Fix path:
+# add Seafile's own apt repo for libseafile-dev, or build libseafile from source.
+# Until a relative actually asks for a native desktop client, this stays off.
 on:
-  push:
-    branches: [rellince]
-    tags: ["v*.*.*"]
   workflow_dispatch:
 
 permissions:
